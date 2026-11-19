@@ -7,14 +7,19 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.js"></script>
 <style>
-:root{--bg:#f6f7f9;--fg:#1c2330;--mut:#5b6575;--card:#fff;--line:#d9dee6;--acc:#2f5fb3;--accfg:#fff;--warn:#a15c00;--ok:#1d7a46;
+:root{--bg:#f4f7fb;--fg:#1c2330;--mut:#566175;--card:#fff;--line:#d6dfea;--acc:#004F8F;--accfg:#fff;--acc2:#FAC02B;--acc2fg:#1c2330;--warn:#9a5b00;--ok:#1d7a46;color-scheme:light;
 box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14171c;--fg:#e8ebf0;--mut:#9aa4b2;--card:#1d222a;--line:#323a46;--acc:#6f9bea;--accfg:#10151c;--warn:#e0a24a;--ok:#5cc58a;color-scheme:dark}}
-:root[data-theme="dark"]{--bg:#14171c;--fg:#e8ebf0;--mut:#9aa4b2;--card:#1d222a;--line:#323a46;--acc:#6f9bea;--accfg:#10151c;--warn:#e0a24a;--ok:#5cc58a;color-scheme:dark}
 html{scroll-padding-top:env(safe-area-inset-top,0px)}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
 main{width:85%;margin:0 auto;padding:20px 0 48px}
-h1{font-size:1.5rem;margin:.2em 0}h2{font-size:1.1rem;margin:0 0 10px}
+h1{font-size:1.5rem;margin:0;color:var(--acc)}h2{font-size:1.1rem;margin:0 0 10px;padding-left:10px;border-left:5px solid var(--acc2);color:var(--acc)}
+.top{background:var(--card);border-bottom:4px solid var(--acc2)}
+.top-in{width:85%;margin:0 auto;display:flex;align-items:center;gap:16px;padding:14px 0}
+.logo{height:56px;width:auto;max-width:40vw;object-fit:contain}
+.top .sub{margin:4px 0 0;font-size:.92rem}
+:focus-visible{outline:3px solid var(--acc2);outline-offset:2px}
+button:hover:not(:disabled){filter:brightness(1.15)}
+button.sec:hover:not(:disabled){background:var(--acc2);color:var(--acc2fg);border-color:var(--acc2);filter:none}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:16px 0}
 .sub,small{color:var(--mut)}
 label{display:block;margin:10px 0 2px;font-weight:600;font-size:.92rem}
@@ -27,9 +32,9 @@ button:disabled{opacity:.5;cursor:default}
 .msg{margin-top:10px;white-space:pre-wrap}.warn{color:var(--warn)}.ok{color:var(--ok)}
 .prev{display:flex;flex-direction:column;max-height:85vh}.prev>*{flex:none}
 .tw{flex:1 1 auto;min-height:140px;overflow:auto;margin-top:10px}table{border-collapse:collapse;width:100%;font-size:.88rem}
-th{position:sticky;top:0;background:var(--card);z-index:1}
+th{position:sticky;top:0;background:#e6eef7;color:var(--acc);z-index:1}
 th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;white-space:nowrap}
-tr.f td{background:var(--fest,rgba(120,190,120,.25))}tr.n td{background:rgba(230,150,80,.18)}
+tr.f td{background:var(--fest,rgba(250,192,43,.3))}tr.n td{background:rgba(230,150,80,.18)}
 .i{background:none;color:var(--acc);border:0;padding:0 4px;margin:0 0 0 4px;font-size:1.05rem;font-weight:400;vertical-align:middle}
 .info{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0;font-size:.9rem}
 .info pre{background:var(--bg);padding:8px;border-radius:6px;overflow-x:auto;margin:6px 0}
@@ -42,9 +47,12 @@ progress{display:block;width:100%;height:14px;margin-top:12px;accent-color:var(-
 </style>
 </head>
 <body>
+<header class="top"><div class="top-in">
+<img class="logo" src="img/logo.png" alt="Logo" onerror="this.style.display='none'">
+<div><h1>Assegnazione dei Vangeli</h1>
+<p class="sub">Carica i file, controlla l’anteprima e scarica cartelle e riepilogo. Lo script Python gira direttamente nel tuo browser (Pyodide): nessun dato viene inviato a un server. Il primo avvio scarica Python e le librerie e può richiedere un minuto.</p></div>
+</div></header>
 <main>
-<h1>Assegnazione dei Vangeli</h1>
-<p class="sub">Carica i file, controlla l’anteprima e scarica cartelle e riepilogo. Lo script Python gira direttamente nel tuo browser (Pyodide): nessun dato viene inviato a un server. Il primo avvio scarica Python e le librerie e può richiedere un minuto.</p>
 
 <div class="card">
 <h2>1. File di input</h2>
@@ -131,9 +139,11 @@ async function avvia(m){
   const p=await loadPyodide();
   await p.loadPackage('micropip');
   await p.runPythonAsync("import micropip\nawait micropip.install(['python-docx','openpyxl'])");
-  const r=await fetch(PY_SRC);if(!r.ok)throw new Error('Non trovo '+PY_SRC+' accanto a index.html.');
+  const r=await fetch(PY_SRC+'?v='+Date.now(),{cache:'no-store'});if(!r.ok)throw new Error('Non trovo '+PY_SRC+' accanto a index.html.');
   p.FS.writeFile('genera_cartelle.py',await u8(r));
-  return mod=p.pyimport('genera_cartelle');
+  const m2=p.pyimport('genera_cartelle');
+  if(!m2.inizia_zip)throw new Error('Il file genera_cartelle.py pubblicato sul sito è una versione vecchia: caricalo di nuovo nel repository insieme a index.html, poi ricarica la pagina con Ctrl+F5.');
+  return mod=m2;
 }
 const argv=async()=>[await $('fCsv').files[0].text(),await u8($('fVan').files[0])];
 const opz=()=>[$('colF').value.slice(1),$('ord').value,+$('seed').value||0,$('fest').checked];

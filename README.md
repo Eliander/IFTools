@@ -59,19 +59,20 @@ Ogni marker deve essere l'unico testo del suo paragrafo, scritto esattamente cos
 ```
 index.html
 genera_cartelle.py
+img/logo.png
 docs/
 ├── Indicazioni_per_collaboratori_template.docx
 └── Traccia_contributo_template.docx
 ```
 
-Vanno bene host statici gratuiti come GitHub Pages, Netlify o Cloudflare Pages. Non caricare mai nel repository il CSV con i contatti né i Word reali.
+Vanno bene host statici gratuiti come GitHub Pages, Netlify o Cloudflare Pages. Il logo mostrato in alto è `img/logo.png`: se il file manca, la pagina funziona lo stesso senza logo. Non caricare mai nel repository il CSV con i contatti né i Word reali.
 
 ### Come si usa la pagina
 
 1. Carica i quattro file. L'icona ⓘ accanto a ciascuno spiega formato e marker.
 2. Scegli il colore di sfondo che nel Word identifica i festivi (default verde), l'ordine di assegnazione (CSV o casuale, con seme per ripetere il risultato) e se usare i festivi come riserva.
 3. **Anteprima assegnazione**: tabella scorrevole con data, persona, regione ecclesiastica, giorno liturgico, Vangelo e categoria. Le righe senza Vangelo sono in arancione e i festivi nel colore scelto.
-4. **Genera**: scarica un unico file `vangeli_cartelle.zip` con le cartelle e `riepilogo.xlsx`.
+4. **Genera**: una barra di avanzamento mostra le cartelle create (persona per persona), poi scarica un unico file `vangeli_cartelle.zip` con le cartelle e `riepilogo.xlsx`.
 5. **Aggiungere i telefoni dopo**: in fondo alla pagina carichi il riepilogo e un CSV con nome, cognome e telefono. I numeri vengono associati per nome e cognome e scarichi `riepilogo_con_telefoni.xlsx`.
 
 I pulsanti "Scarica template" leggono i file dalla cartella `docs/`; se non li trovano, ne generano uno al volo. Se pubblichi usando la cartella `/docs` come radice del sito, in `index.html` imposta `TEMPLATE_DIR=''`.
@@ -81,7 +82,7 @@ I pulsanti "Scarica template" leggono i file dalla cartella `docs/`; se non li t
 - Python gira nel browser con [Pyodide](https://pyodide.org) (versione 0.27.7 da jsDelivr). Al primo avvio scarica Python e le librerie `python-docx` e `openpyxl`: ci vuole circa un minuto, poi restano in cache. Serve quindi una connessione a internet.
 - Nessun dato viene inviato a un server: i file restano nel browser.
 - La pagina non funziona aprendo `index.html` direttamente dal computer, perché deve leggere `genera_cartelle.py`. Per provarla in locale, nella cartella lancia `python -m http.server` e apri `http://localhost:8000`.
-- Durante la generazione la pagina può sembrare ferma per qualche decina di secondi.
+- Python gira nella stessa scheda della pagina: la barra si aggiorna a ogni persona e c'è una breve pausa finale per comporre lo ZIP.
 - Ogni cartella pesa circa 2,3 MB per i font incorporati nei modelli Word. Con 131 persone lo ZIP supera i 200 MB e viene costruito in memoria: con poca RAM la generazione può fallire. In quel caso usa la riga di comando.
 
 ## Uso 2: riga di comando
