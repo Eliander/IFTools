@@ -441,24 +441,46 @@ def anteprima(csv_text, vangeli_b, verde, ordine="csv", seed=0, includi=False):
     })
 
 
-def genera_zip(csv_text, vangeli_b, indicazioni_b, traccia_b, verde, ordine="csv", seed=0, includi=False):
-    """Restituisce i byte di un unico ZIP con tutte le cartelle e riepilogo.xlsx."""
+_GEN = {}  # stato della generazione a passi (usato dalla barra di avanzamento della pagina)
+
+
+def inizia_zip(csv_text, vangeli_b, indicazioni_b, traccia_b, verde, ordine="csv", seed=0, includi=False):
+    """Prepara la generazione a passi e restituisce il numero di passi (uno per persona con Vangelo)."""
     _, righe, _, _, _ = _prepara(csv_text, vangeli_b, verde, ordine, int(seed), bool(includi))
     Path("/tmp/t.docx").write_bytes(_b(traccia_b))
-    ind = _b(indicazioni_b)
     out = io.BytesIO()
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as z:
-        for r in righe:
-            v, p = r["vangelo"], r["persona"]
-            if not v:
-                continue
-            compila_traccia("/tmp/t.docx", "/tmp/o.docx", f"{p['nome']} {p['cognome']}", v["giorno"], v["rif"], v["testo"])
-            fn = f"Traccia_contributo_{nome_file_sicuro(p['cognome'])}_{nome_file_sicuro(p['nome'])}.docx"
-            z.write("/tmp/o.docx", f"{r['cartella']}/{fn}")
-            z.writestr(f"{r['cartella']}/{NOME_INDICAZIONI}", ind)
-        scrivi_riepilogo("/tmp/r.xlsx", righe)
-        z.write("/tmp/r.xlsx", "riepilogo.xlsx")
-    return out.getvalue()
+    _GEN.clear()
+    _GEN.update(tutte=righe, righe=[r for r in righe if r["vangelo"]], ind=_b(indicazioni_b), out=out,
+                z=zipfile.ZipFile(out, "w", zipfile.ZIP_STORED))
+    return len(_GEN["righe"])
+
+
+def passo_zip(i):
+    """Crea la cartella della persona i-esima dentro lo ZIP."""
+    r = _GEN["righe"][i]
+    v, p = r["vangelo"], r["persona"]
+    compila_traccia("/tmp/t.docx", "/tmp/o.docx", f"{p['nome']} {p['cognome']}", v["giorno"], v["rif"], v["testo"])
+    fn = f"Traccia_contributo_{nome_file_sicuro(p['cognome'])}_{nome_file_sicuro(p['nome'])}.docx"
+    _GEN["z"].write("/tmp/o.docx", f"{r['cartella']}/{fn}")
+    _GEN["z"].writestr(f"{r['cartella']}/{NOME_INDICAZIONI}", _GEN["ind"])
+
+
+def chiudi_zip():
+    """Aggiunge riepilogo.xlsx, chiude lo ZIP e ne restituisce i byte."""
+    scrivi_riepilogo("/tmp/r.xlsx", _GEN["tutte"])
+    _GEN["z"].write("/tmp/r.xlsx", "riepilogo.xlsx")
+    _GEN["z"].close()
+    dati = _GEN["out"].getvalue()
+    _GEN.clear()
+    return dati
+
+
+def genera_zip(csv_text, vangeli_b, indicazioni_b, traccia_b, verde, ordine="csv", seed=0, includi=False):
+    """Restituisce i byte di un unico ZIP con tutte le cartelle e riepilogo.xlsx."""
+    n = inizia_zip(csv_text, vangeli_b, indicazioni_b, traccia_b, verde, ordine, seed, includi)
+    for i in range(n):
+        passo_zip(i)
+    return chiudi_zip()
 
 
 def aggiorna_telefoni(riepilogo_b, csv_text):

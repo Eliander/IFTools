@@ -38,6 +38,7 @@ tr.f td{background:var(--fest,rgba(120,190,120,.25))}tr.n td{background:rgba(230
 @media (max-width:760px){.stack{grid-template-columns:1fr}}
 button.tpl{margin:6px 0 0;padding:6px 12px;font-size:.9rem}
 input[type=color]{width:56px;height:36px;padding:2px;vertical-align:middle}
+progress{display:block;width:100%;height:14px;margin-top:12px;accent-color:var(--acc)}
 </style>
 </head>
 <body>
@@ -98,6 +99,7 @@ Luca,Bianchi,Veneto,</pre>
 <div class="card">
 <h2>3. Genera</h2>
 <button id="bGen" disabled>Genera cartelle e riepilogo</button>
+<progress id="prog" max="1" value="0" hidden></progress>
 <div class="msg" id="msgG"></div>
 <small>Viene scaricato un unico file ZIP con le cartelle e il riepilogo.xlsx. Ogni cartella pesa circa 2,3 MB: con molte persone il file supera i 200 MB e la composizione richiede un po’ di memoria e qualche istante.</small>
 </div>
@@ -161,13 +163,23 @@ $('bAnt').onclick=async()=>{
 $('bGen').onclick=async()=>{
   const m=$('msgG');m.className='msg';$('bGen').disabled=true;
   try{
+    const pr=$('prog');pr.hidden=false;pr.removeAttribute('value');
     const md=await avvia(m);
-    m.textContent='Genero cartelle e ZIP… la pagina può sembrare ferma per qualche decina di secondi.';await pausa();
+    m.textContent='Leggo i file…';await pausa();
     const [csv,van]=await argv();
-    const res=md.genera_zip(csv,van,await u8($('fInd').files[0]),await u8($('fTra').files[0]),...opz());
+    const n=md.inizia_zip(csv,van,await u8($('fInd').files[0]),await u8($('fTra').files[0]),...opz());
+    pr.max=Math.max(n,1);pr.value=0;
+    for(let i=0;i<n;i++){
+      md.passo_zip(i);pr.value=i+1;
+      m.textContent=`Creo le cartelle… ${i+1} di ${n} (${Math.round((i+1)*100/n)}%)`;
+      await new Promise(r=>setTimeout(r,0));
+    }
+    m.textContent='Compongo lo ZIP…';pr.removeAttribute('value');await pausa();
+    const res=md.chiudi_zip();
     const buf=res.getBuffer();scarica(new Blob([buf.data]),'vangeli_cartelle.zip');buf.release();res.destroy();
+    pr.max=1;pr.value=1;
     m.textContent='Fatto: ZIP scaricato (cartelle e riepilogo.xlsx).';m.className='msg ok';
-  }catch(e){m.textContent='Errore: '+e.message;m.className='msg warn'}
+  }catch(e){m.textContent='Errore: '+e.message;m.className='msg warn';$('prog').hidden=true}
   $('bGen').disabled=false;
 };
 
