@@ -13,7 +13,7 @@ box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:en
 :root[data-theme="dark"]{--bg:#14171c;--fg:#e8ebf0;--mut:#9aa4b2;--card:#1d222a;--line:#323a46;--acc:#6f9bea;--accfg:#10151c;--warn:#e0a24a;--ok:#5cc58a;color-scheme:dark}
 html{scroll-padding-top:env(safe-area-inset-top,0px)}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:980px;margin:0 auto;padding:20px 16px 48px}
+main{width:85%;margin:0 auto;padding:20px 0 48px}
 h1{font-size:1.5rem;margin:.2em 0}h2{font-size:1.1rem;margin:0 0 10px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:16px 0}
 .sub,small{color:var(--mut)}
@@ -25,14 +25,17 @@ button{background:var(--acc);color:var(--accfg);border:0;border-radius:8px;paddi
 button.sec{background:transparent;color:var(--acc);border:1px solid var(--acc)}
 button:disabled{opacity:.5;cursor:default}
 .msg{margin-top:10px;white-space:pre-wrap}.warn{color:var(--warn)}.ok{color:var(--ok)}
-.tw{overflow-x:auto;margin-top:10px}table{border-collapse:collapse;width:100%;font-size:.88rem}
+.prev{display:flex;flex-direction:column;max-height:85vh}.prev>*{flex:none}
+.tw{flex:1 1 auto;min-height:140px;overflow:auto;margin-top:10px}table{border-collapse:collapse;width:100%;font-size:.88rem}
+th{position:sticky;top:0;background:var(--card);z-index:1}
 th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;white-space:nowrap}
 tr.f td{background:var(--fest,rgba(120,190,120,.25))}tr.n td{background:rgba(230,150,80,.18)}
 .i{background:none;color:var(--acc);border:0;padding:0 4px;margin:0 0 0 4px;font-size:1.05rem;font-weight:400;vertical-align:middle}
 .info{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0;font-size:.9rem}
 .info pre{background:var(--bg);padding:8px;border-radius:6px;overflow-x:auto;margin:6px 0}
 .info code{background:var(--bg);padding:0 4px;border-radius:4px}
-.info p{margin:6px 0}.stack>div{margin-bottom:14px}
+.info p{margin:6px 0}.stack{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 24px;align-items:start}.stack>div{margin-bottom:14px}
+@media (max-width:760px){.stack{grid-template-columns:1fr}}
 button.tpl{margin:6px 0 0;padding:6px 12px;font-size:.9rem}
 input[type=color]{width:56px;height:36px;padding:2px;vertical-align:middle}
 </style>
@@ -80,7 +83,7 @@ Luca,Bianchi,Veneto,</pre>
 </div>
 </div>
 
-<div class="card">
+<div class="card prev">
 <h2>2. Opzioni</h2>
 <div class="grid">
 <div><label for="ord">Ordine di assegnazione</label><select id="ord"><option value="csv">In ordine del CSV</option><option value="casuale">Casuale</option></select></div>
@@ -96,7 +99,7 @@ Luca,Bianchi,Veneto,</pre>
 <h2>3. Genera</h2>
 <button id="bGen" disabled>Genera cartelle e riepilogo</button>
 <div class="msg" id="msgG"></div>
-<small>Con Chrome o Edge puoi scegliere una cartella del computer in cui salvare tutto. Con gli altri browser i file vengono scaricati in più zip, per non saturare la memoria.</small>
+<small>Viene scaricato un unico file ZIP con le cartelle e il riepilogo.xlsx. Ogni cartella pesa circa 2,3 MB: con molte persone il file supera i 200 MB e la composizione richiede un po’ di memoria e qualche istante.</small>
 </div>
 
 <div class="card">
@@ -255,26 +258,23 @@ async function scriviDir(root,path,data){const parts=path.split('/');let d=root;
 $('bGen').onclick=async()=>{
   const m=$('msgG');m.className='msg';$('bGen').disabled=true;
   try{
-    let root=null;
-    if(window.showDirectoryPicker){try{root=await showDirectoryPicker({mode:'readwrite'})}catch(e){if(e.name=='AbortError'){$('bGen').disabled=false;return}}}
     const ind=await rd($('fInd').files[0]),tra=await rd($('fTra').files[0]);
     const indNome=$('fInd').files[0].name;
     const zt=await JSZip.loadAsync(tra),docXml=await zt.file('word/document.xml').async('string');
-    const righe=state.righe.filter(r=>r.v);let zip=new JSZip(),nz=0,parte=1,inZip=0;
-    const flush=async()=>{if(!inZip)return;const b=await zip.generateAsync({type:'blob',compression:'STORE'});scarica(b,`cartelle_parte${parte++}.zip`);zip=new JSZip();inZip=0;await new Promise(r=>setTimeout(r,600))};
+    const righe=state.righe.filter(r=>r.v),zip=new JSZip();
     for(const [i,r] of righe.entries()){
       m.textContent=`Creo le cartelle… ${i+1} di ${righe.length}`;
       const z=await JSZip.loadAsync(tra);
       z.file('word/document.xml',compilaTraccia(z,docXml,`${r.p.nome} ${r.p.cognome}`,r.v.giorno,r.v.rif,r.v.testo));
       const bytes=await z.generateAsync({type:'uint8array',compression:'DEFLATE',compressionOptions:{level:1}});
       const fn=`Traccia_contributo_${safe(r.p.cognome)}_${safe(r.p.nome)}.docx`;
-      if(root){await scriviDir(root,`${r.cart}/${indNome}`,ind);await scriviDir(root,`${r.cart}/${fn}`,bytes)}
-      else{zip.file(`${r.cart}/${indNome}`,ind);zip.file(`${r.cart}/${fn}`,bytes);if(++inZip>=25)await flush()}
+      zip.file(`${r.cart}/${indNome}`,ind);zip.file(`${r.cart}/${fn}`,bytes);
     }
     const xl=await xlsxRiepilogo(state.righe);
-    if(root)await scriviDir(root,'riepilogo.xlsx',xl);
-    else{await flush();scarica(new Blob([xl]),'riepilogo.xlsx')}
-    m.textContent=`Fatto: ${righe.length} cartelle e riepilogo.xlsx`+(root?' salvati nella cartella scelta.':` scaricati (${parte-1} zip).`);m.className='msg ok';
+    zip.file('riepilogo.xlsx',xl);
+    const blob=await zip.generateAsync({type:'blob',compression:'STORE'},meta=>{m.textContent='Compongo lo ZIP… '+Math.round(meta.percent)+'%'});
+    scarica(blob,'vangeli_cartelle.zip');
+    m.textContent=`Fatto: ${righe.length} cartelle e riepilogo.xlsx in un unico ZIP.`;m.className='msg ok';
   }catch(e){m.textContent='Errore: '+e.message;m.className='msg warn'}
   $('bGen').disabled=false;
 };
