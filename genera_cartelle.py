@@ -79,6 +79,16 @@ def normalizza(s):
     return re.sub(r"[’'`´]", "", s).lower()
 
 
+ECC = {"veneto": "Triveneto", "trentino alto adige": "Triveneto", "trentino": "Triveneto",
+       "friuli venezia giulia": "Triveneto", "friuli": "Triveneto", "abruzzo": "Abruzzo-Molise",
+       "molise": "Abruzzo-Molise", "valle daosta": "Piemonte", "valle aosta": "Piemonte"}
+
+
+def ecc(regione):
+    """Regione -> regione ecclesiastica (Triveneto, Abruzzo-Molise, ...). Valori ignoti restano invariati."""
+    return ECC.get(re.sub(r"[-\s]+", " ", normalizza(regione)), regione)
+
+
 def pulisci_spazi(s):
     return re.sub(r"\s+", " ", s.replace("\t", " ")).strip()
 
@@ -211,6 +221,7 @@ def leggi_contatti(path):
             persone.append({
                 "nome": nome, "cognome": cognome,
                 "regione": pulisci_spazi(r.get("regione", "")),
+                "ecc": ecc(pulisci_spazi(r.get("regione", ""))),
                 "telefono": pulisci_spazi(r.get("telefono", "")),
             })
     return persone
@@ -263,7 +274,7 @@ def scrivi_riepilogo(path, righe):
     wb = Workbook()
     ws = wb.active
     ws.title = "Riepilogo"
-    intest = ["Nome", "Cognome", "Regione", "Telefono", "Data", "Giorno liturgico",
+    intest = ["Nome", "Cognome", "Regione", "Regione ecclesiastica", "Telefono", "Data", "Giorno liturgico",
               "Vangelo (riferimento)", "Macro categoria", "Cartella", "Testo del Vangelo"]
     ws.append(intest)
     for c in ws[1]:
@@ -273,7 +284,7 @@ def scrivi_riepilogo(path, righe):
     for r in righe:
         v = r["vangelo"]
         ws.append([
-            r["persona"]["nome"], r["persona"]["cognome"], r["persona"]["regione"],
+            r["persona"]["nome"], r["persona"]["cognome"], r["persona"]["regione"], r["persona"].get("ecc", ""),
             r["persona"]["telefono"],
             v["data"] if v else "DA ASSEGNARE",
             v["giorno"] if v else "", v["rif"] if v else "",
@@ -281,16 +292,16 @@ def scrivi_riepilogo(path, righe):
             "\n".join(v["testo"]) if v else "",
         ])
         riga = ws.max_row
-        ws.cell(riga, 4).number_format = "@"  # telefono come testo
+        ws.cell(riga, 5).number_format = "@"  # telefono come testo
         if v:
-            ws.cell(riga, 5).number_format = "DD/MM/YYYY"
+            ws.cell(riga, 6).number_format = "DD/MM/YYYY"
             if v["festivo"]:
                 for c in ws[riga]:
-                    c.fill = PatternFill("solid", fgColor="E2EFDA")
+                    c.fill = PatternFill("solid", fgColor=VERDE_FESTIVO.upper())
         else:
             for c in ws[riga]:
                 c.fill = PatternFill("solid", fgColor="FCE4D6")
-    larghezze = [16, 20, 24, 18, 12, 44, 34, 18, 44, 80]
+    larghezze = [16, 20, 24, 22, 18, 12, 44, 34, 18, 44, 80]
     for i, w in enumerate(larghezze, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A2"
@@ -370,6 +381,108 @@ def main():
     scrivi_riepilogo(out / "riepilogo.xlsx", righe)
     n = sum(1 for r in righe if r["vangelo"])
     print(f"Fatto: {n} cartelle create in '{out}', riepilogo in '{out / 'riepilogo.xlsx'}'.")
+
+
+# --------------------------------------------------------------------------- #
+# API per il browser (Pyodide): la pagina index.html carica questo file e chiama queste funzioni
+# --------------------------------------------------------------------------- #
+import contextlib
+import io
+import json
+import zipfile
+
+ULTIMO_N = 0  # persone aggiornate dall'ultima chiamata a aggiorna_telefoni
+NOME_INDICAZIONI = "Indicazioni_per_collaboratori.docx"
+
+
+def _b(x):
+    return bytes(x.to_py()) if hasattr(x, "to_py") else bytes(x)
+
+
+def _prepara(csv_text, vangeli_b, verde, ordine, seed, includi):
+    global VERDE_FESTIVO
+    VERDE_FESTIVO = verde.lower().lstrip("#")
+    Path("/tmp/c.csv").write_text(csv_text, encoding="utf-8")
+    Path("/tmp/v.docx").write_bytes(_b(vangeli_b))
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        vangeli = leggi_vangeli("/tmp/v.docx")
+    persone = leggi_contatti("/tmp/c.csv")
+    feriali = [v for v in vangeli if not v["festivo"]]
+    festivi = [v for v in vangeli if v["festivo"]]
+    disp = feriali + (festivi if includi else [])
+    ordinate = list(persone)
+    if ordine == "casuale":
+        random.Random(seed).shuffle(ordinate)
+    righe = [{"persona": p, "vangelo": disp[k] if k < len(disp) else None} for k, p in enumerate(ordinate)]
+    righe.sort(key=lambda r: (r["vangelo"] is None, r["vangelo"]["data"] if r["vangelo"] else dt.date.max,
+                              r["persona"]["cognome"]))
+    for r in righe:
+        v, p = r["vangelo"], r["persona"]
+        if v:
+            r["cartella"] = f"{v['macro']}/{v['data']:%Y%m%d}_{nome_file_sicuro(p['cognome'])}_{nome_file_sicuro(p['nome'])}"
+    return vangeli, righe, err.getvalue().splitlines(), len(feriali), len(festivi)
+
+
+def anteprima(csv_text, vangeli_b, verde, ordine="csv", seed=0, includi=False):
+    """Restituisce (JSON) l'assegnazione per la tabella di anteprima."""
+    vangeli, righe, avvisi, nfer, nfes = _prepara(csv_text, vangeli_b, verde, ordine, int(seed), bool(includi))
+    colori = sorted({e.get(docx.oxml.ns.qn("w:fill")) for e in docx.Document("/tmp/v.docx").element.body.iter(docx.oxml.ns.qn("w:shd"))}
+                    - {None, "auto"})
+    return json.dumps({
+        "persone": len(righe), "vangeli": len(vangeli), "feriali": nfer, "festivi": nfes,
+        "avvisi": avvisi, "colori": colori,
+        "righe": [{"data": r["vangelo"]["data"].strftime("%d/%m/%Y") if r["vangelo"] else "",
+                   "persona": f"{r['persona']['nome']} {r['persona']['cognome']}", "ecc": r["persona"]["ecc"],
+                   "giorno": r["vangelo"]["giorno"] if r["vangelo"] else "",
+                   "rif": r["vangelo"]["rif"] if r["vangelo"] else "",
+                   "macro": r["vangelo"]["macro"] if r["vangelo"] else "",
+                   "festivo": bool(r["vangelo"] and r["vangelo"]["festivo"])} for r in righe],
+    })
+
+
+def genera_zip(csv_text, vangeli_b, indicazioni_b, traccia_b, verde, ordine="csv", seed=0, includi=False):
+    """Restituisce i byte di un unico ZIP con tutte le cartelle e riepilogo.xlsx."""
+    _, righe, _, _, _ = _prepara(csv_text, vangeli_b, verde, ordine, int(seed), bool(includi))
+    Path("/tmp/t.docx").write_bytes(_b(traccia_b))
+    ind = _b(indicazioni_b)
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as z:
+        for r in righe:
+            v, p = r["vangelo"], r["persona"]
+            if not v:
+                continue
+            compila_traccia("/tmp/t.docx", "/tmp/o.docx", f"{p['nome']} {p['cognome']}", v["giorno"], v["rif"], v["testo"])
+            fn = f"Traccia_contributo_{nome_file_sicuro(p['cognome'])}_{nome_file_sicuro(p['nome'])}.docx"
+            z.write("/tmp/o.docx", f"{r['cartella']}/{fn}")
+            z.writestr(f"{r['cartella']}/{NOME_INDICAZIONI}", ind)
+        scrivi_riepilogo("/tmp/r.xlsx", righe)
+        z.write("/tmp/r.xlsx", "riepilogo.xlsx")
+    return out.getvalue()
+
+
+def aggiorna_telefoni(riepilogo_b, csv_text):
+    """Associa i telefoni (CSV nome, cognome, telefono) a un riepilogo.xlsx già generato."""
+    global ULTIMO_N
+    import openpyxl
+    chiave = lambda s: "".join(c for c in unicodedata.normalize("NFD", s.lower()) if c.isascii() and c.isalnum())
+    Path("/tmp/t.csv").write_text(csv_text, encoding="utf-8")
+    tel = {(chiave(r["nome"]), chiave(r["cognome"])): r["telefono"] for r in leggi_contatti("/tmp/t.csv") if r["telefono"]}
+    wb = openpyxl.load_workbook(io.BytesIO(_b(riepilogo_b)))
+    ws = wb.active
+    col = {str(c.value).strip().lower(): i for i, c in enumerate(ws[1], 1)}
+    if not {"nome", "cognome", "telefono"} <= set(col):
+        raise ValueError("Nel riepilogo servono le colonne Nome, Cognome e Telefono.")
+    ULTIMO_N = 0
+    for riga in range(2, ws.max_row + 1):
+        k = (chiave(str(ws.cell(riga, col["nome"]).value or "")), chiave(str(ws.cell(riga, col["cognome"]).value or "")))
+        if k in tel:
+            c = ws.cell(riga, col["telefono"])
+            c.value, c.number_format = tel[k], "@"
+            ULTIMO_N += 1
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()
 
 
 if __name__ == "__main__":

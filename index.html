@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Assegnazione Vangeli – Generatore cartelle</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.js"></script>
 <style>
 :root{--bg:#f6f7f9;--fg:#1c2330;--mut:#5b6575;--card:#fff;--line:#d9dee6;--acc:#2f5fb3;--accfg:#fff;--warn:#a15c00;--ok:#1d7a46;
 box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
@@ -43,7 +43,7 @@ input[type=color]{width:56px;height:36px;padding:2px;vertical-align:middle}
 <body>
 <main>
 <h1>Assegnazione dei Vangeli</h1>
-<p class="sub">Carica i file, controlla l’anteprima e scarica cartelle e riepilogo. Tutto avviene nel tuo browser: nessun dato viene inviato a un server.</p>
+<p class="sub">Carica i file, controlla l’anteprima e scarica cartelle e riepilogo. Lo script Python gira direttamente nel tuo browser (Pyodide): nessun dato viene inviato a un server. Il primo avvio scarica Python e le librerie e può richiedere un minuto.</p>
 
 <div class="card">
 <h2>1. File di input</h2>
@@ -92,7 +92,7 @@ Luca,Bianchi,Veneto,</pre>
 <label class="chk"><input type="checkbox" id="fest"> Usa i giorni festivi (verdi) come riserva se i Vangeli non bastano</label>
 <button id="bAnt">Anteprima assegnazione</button>
 <div class="msg" id="msgA"></div>
-<div class="tw"><table id="tab" hidden></table></div>
+<div class="tw" hidden><table id="tab"></table></div>
 </div>
 
 <div class="card">
@@ -116,165 +116,57 @@ Luca,Bianchi,Veneto,</pre>
 
 <script>
 const $=id=>document.getElementById(id);
-const W='http://schemas.openxmlformats.org/wordprocessingml/2006/main';let VERDE='b6d7a8';
-const MESI=['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
-const GS=['lunedi','martedi','mercoledi','giovedi','venerdi','sabato','domenica'];
-const MACRO={AVVENTO:'AVVENTO-NATALE',NATALE:'AVVENTO-NATALE',QUARESIMA:'QUARESIMA-PASQUA',PASQUA:'QUARESIMA-PASQUA'};
-const RE_CAP=/^(\d+\s*,\s*[0-9ab.,\-–\s]*?\d[ab]?)\s+(?=[A-ZÀ-Ý«\["“])(.+)$/;
-const RE_TESTA=/^(Dal\s+(?:santo\s+)?Vangelo\s+secondo\s+[^\d]*?)\s*(?:\b[A-Z][a-z]{1,2}\.?\s+)?(\d.*)$/i;
-const norm=s=>s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[’'`´]/g,'').toLowerCase();
-const clean=s=>s.replace(/\s+/g,' ').trim();
-const safe=s=>clean(s).replace(/[\\/:*?"<>|]/g,'').replace(/ /g,'-');
-const pad=n=>String(n).padStart(2,'0');
-const title=s=>s===s.toUpperCase()&&s!==s.toLowerCase()?s.toLowerCase().replace(/(^|[\s'’-])(\p{L})/gu,(m,a,b)=>a+b.toUpperCase()):s;
-const ymd=d=>d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate());
-const dmy=d=>pad(d.getDate())+'/'+pad(d.getMonth()+1)+'/'+d.getFullYear();
-const rd=f=>f.arrayBuffer();
-const ECC={'veneto':'Triveneto','trentino alto adige':'Triveneto','trentino':'Triveneto','friuli venezia giulia':'Triveneto','friuli':'Triveneto','abruzzo':'Abruzzo-Molise','molise':'Abruzzo-Molise','valle daosta':'Piemonte','valle aosta':'Piemonte'};
-const ecc=r=>ECC[norm(r).replace(/[-\s]+/g,' ')]||r;
-let state=null,tplT=null,indB=null;
-
-function parseCSV(t){
-  t=t.replace(/^\uFEFF/,'');const l=t.split('\n')[0];
-  const d=(l.match(/;/g)||[]).length>(l.match(/,/g)||[]).length?';':',';
-  const rows=[];let r=[],c='',q=false;
-  for(let i=0;i<t.length;i++){const ch=t[i];
-    if(q){if(ch=='"'){if(t[i+1]=='"'){c+='"';i++}else q=false}else c+=ch}
-    else if(ch=='"')q=true;
-    else if(ch==d){r.push(c);c=''}
-    else if(ch=='\n'||ch=='\r'){if(ch=='\r'&&t[i+1]=='\n')i++;r.push(c);c='';rows.push(r);r=[]}
-    else c+=ch}
-  if(c||r.length){r.push(c);rows.push(r)}
-  const h=rows.shift().map(x=>norm(x.trim()));
-  return rows.map(r=>Object.fromEntries(h.map((k,i)=>[k,clean(r[i]||'')])));
+const W='http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+const PY_SRC='genera_cartelle.py'; // lo script Python, nella stessa cartella di questa pagina
+const u8=async f=>new Uint8Array(await f.arrayBuffer());
+const pausa=()=>new Promise(r=>setTimeout(r,60));
+const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+let mod=null;
+function scarica(blob,nome){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=nome;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),20000)}
+async function avvia(m){
+  if(mod)return mod;
+  m.textContent='Carico Python nel browser (solo la prima volta, può richiedere un minuto)…';await pausa();
+  const p=await loadPyodide();
+  await p.loadPackage('micropip');
+  await p.runPythonAsync("import micropip\nawait micropip.install(['python-docx','openpyxl'])");
+  const r=await fetch(PY_SRC);if(!r.ok)throw new Error('Non trovo '+PY_SRC+' accanto a index.html.');
+  p.FS.writeFile('genera_cartelle.py',await u8(r));
+  return mod=p.pyimport('genera_cartelle');
 }
-function leggiContatti(txt){
-  return parseCSV(txt).filter(r=>r.nome||r.cognome).map(r=>({nome:title(r.nome||''),cognome:title(r.cognome||''),regione:r.regione||'',ecc:ecc(r.regione||''),telefono:r.telefono||''}));
-}
-
-async function leggiVangeli(buf){VERDE=$('colF').value.slice(1).toLowerCase();
-  const z=await JSZip.loadAsync(buf);
-  const dom=new DOMParser().parseFromString(await z.file('word/document.xml').async('string'),'application/xml');
-  const ps=[...dom.getElementsByTagNameNS(W,'p')].map(p=>{
-    let t='';for(const e of p.getElementsByTagNameNS(W,'*')){if(e.localName=='t')t+=e.textContent;else if(e.localName=='tab'||e.localName=='br')t+=' '}
-    const st=p.getElementsByTagNameNS(W,'pStyle')[0];
-    return{t:clean(t),h:!!st&&/^heading/i.test(st.getAttributeNS(W,'val')||''),
-      f:[...p.getElementsByTagNameNS(W,'shd')].map(e=>(e.getAttributeNS(W,'fill')||'').toLowerCase()).filter(x=>x&&x!='auto')};
-  });
-  const my=ps[0].t.match(/(\d{4})\s*\/\s*(\d{4})/),y0=my?+my[1]:2027;
-  const sez=[];let cur=null;ps.forEach((p,i)=>{if(p.h)cur=p.t.toUpperCase();sez[i]=cur});
-  const bl=[];ps.forEach((p,i)=>{if(/^dal\s+(santo\s+)?vangelo/i.test(p.t)){const h=[];let j=i-1;while(j>=0&&ps[j].t&&!ps[j].h){h.unshift(j);j--}bl.push({i,h})}});
-  const out=[],avvisi=[];let prev=null;
-  bl.forEach((b,k)=>{
-    const ht=b.h.map(j=>ps[j].t),giorno=ht.join(' – '),festivo=b.h.some(j=>ps[j].f.includes(VERDE));
-    const macro=MACRO[sez[b.i]]||sez[b.i];
-    let rif=ps[b.i].t,da=b.i+1,inc=null;
-    if(!/\d/.test(rif)){let j=b.i+1;while(j<ps.length&&!ps[j].t)j++;rif+=' '+ps[j].t;da=j+1}
-    const m3=RE_TESTA.exec(rif);
-    if(m3){const te=m3[1].trim(),m4=RE_CAP.exec(m3[2]);if(m4){rif=te+' '+m4[1];inc=m4[2]}else rif=te+' '+m3[2]}
-    const fine=k+1<bl.length?bl[k+1].h[0]:ps.length,testo=inc?[inc]:[];
-    for(let j=da;j<fine;j++){if(ps[j].h)break;if(ps[j].t)testo.push(ps[j].t)}
-    const all=ht.join(' '),n=all.match(/(?<!\d)(\d{1,2})(?!\d)/);
-    if(!n)throw new Error('Giorno non trovato in: '+giorno);
-    const gn=+n[1],na=norm(all);let mese=MESI.findIndex(m=>na.includes(m))+1;
-    if(!mese){if(!prev)throw new Error('Mese non trovato in: '+giorno);mese=prev.getMonth()+1+(gn<prev.getDate()?1:0)}
-    const anno=(macro=='AVVENTO-NATALE'&&mese>=11)?y0:y0+1,data=new Date(anno,mese-1,gn);prev=data;
-    const w0=norm(ht[0]||'').split(' ')[0],wd=(data.getDay()+6)%7;
-    if(GS.includes(w0)&&GS.indexOf(w0)!=wd)avvisi.push(`«${giorno}» cade di ${GS[wd]}`);
-    out.push({data,giorno,rif,testo,festivo,macro});
-  });
-  const colori=new Set();bl.forEach(b=>b.h.forEach(j=>ps[j].f.forEach(c=>colori.add(c))));
-  return{vangeli:out,avvisi,colori:[...colori]};
-}
-
-function rng(s){return()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
-function assegna(persone,vangeli){
-  const fer=vangeli.filter(v=>!v.festivo),fes=vangeli.filter(v=>v.festivo);
-  const disp=fer.concat($('fest').checked?fes:[]);
-  let ord=[...persone];
-  if($('ord').value=='casuale'){const r=rng(+$('seed').value||0);for(let i=ord.length-1;i>0;i--){const j=Math.floor(r()*(i+1));[ord[i],ord[j]]=[ord[j],ord[i]]}}
-  const righe=ord.map((p,k)=>({p,v:disp[k]||null}));
-  righe.sort((a,b)=>(!a.v-!b.v)||(a.v&&a.v.data-b.v.data)||a.p.cognome.localeCompare(b.p.cognome));
-  righe.forEach(r=>{if(r.v)r.cart=`${r.v.macro}/${ymd(r.v.data)}_${safe(r.p.cognome)}_${safe(r.p.nome)}`});
-  return{righe,nFer:fer.length,nFes:fes.length};
-}
+const argv=async()=>[await $('fCsv').files[0].text(),await u8($('fVan').files[0])];
+const opz=()=>[$('colF').value.slice(1),$('ord').value,+$('seed').value||0,$('fest').checked];
 
 $('bAnt').onclick=async()=>{
   const m=$('msgA');m.className='msg';$('bGen').disabled=true;
   try{
     if(!$('fCsv').files[0]||!$('fVan').files[0])throw new Error('Carica almeno il CSV e il Word dei Vangeli.');
-    const persone=leggiContatti(await $('fCsv').files[0].text());
-    const {vangeli,avvisi,colori}=await leggiVangeli(await rd($('fVan').files[0]));
-    document.documentElement.style.setProperty('--fest','#'+VERDE+'66');
-    const a=assegna(persone,vangeli);state={persone,vangeli,...a};
-    const senza=a.righe.filter(r=>!r.v).length;
-    m.textContent=`Persone: ${persone.length}. Vangeli: ${vangeli.length} (${a.nFer} non festivi, ${a.nFes} festivi).`
+    const md=await avvia(m);m.textContent='Elaboro…';await pausa();
+    const [csv,van]=await argv(),o=opz();
+    const r=JSON.parse(md.anteprima(csv,van,...o));
+    document.documentElement.style.setProperty('--fest','#'+o[0]+'66');
+    const senza=r.righe.filter(x=>!x.data).length;
+    m.textContent=`Persone: ${r.persone}. Vangeli: ${r.vangeli} (${r.feriali} non festivi, ${r.festivi} festivi).`
       +(senza?`\nAttenzione: ${senza} persone restano senza Vangelo. Spunta l’opzione dei festivi per coprirle.`:'\nTutte le persone hanno un Vangelo.')
-      +(avvisi.length?'\nAvvisi sulle date:\n'+avvisi.join('\n'):'');
-    m.className='msg '+(senza||avvisi.length?'warn':'ok');
-    if(!a.nFes){m.textContent+='\nNessun giorno festivo riconosciuto con il colore #'+VERDE+'.'+(colori.length?' Colori di sfondo trovati nelle intestazioni: '+colori.map(c=>'#'+c).join(', ')+'.':'');m.className='msg warn'}
-    const t=$('tab');t.hidden=false;
-    t.innerHTML='<tr><th>Data</th><th>Persona</th><th>Regione ecclesiastica</th><th>Giorno liturgico</th><th>Vangelo</th><th>Categoria</th></tr>'+a.righe.map(r=>{
-      const e=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
-      return `<tr class="${!r.v?'n':r.v.festivo?'f':''}"><td>${r.v?dmy(r.v.data):'DA ASSEGNARE'}</td><td>${e(r.p.nome+' '+r.p.cognome)}</td><td>${e(r.p.ecc)}</td><td>${r.v?e(r.v.giorno):''}</td><td>${r.v?e(r.v.rif):''}</td><td>${r.v?r.v.macro:''}</td></tr>`}).join('');
+      +(r.avvisi.length?'\nAvvisi sulle date:\n'+r.avvisi.join('\n'):'');
+    m.className='msg '+(senza||r.avvisi.length?'warn':'ok');
+    if(!r.festivi){m.textContent+='\nNessun giorno festivo riconosciuto con il colore #'+o[0]+'.'+(r.colori.length?' Colori di sfondo trovati nel file: '+r.colori.map(c=>'#'+c).join(', ')+'.':'');m.className='msg warn'}
+    const t=$('tab');t.parentNode.hidden=false;
+    t.innerHTML='<tr><th>Data</th><th>Persona</th><th>Regione ecclesiastica</th><th>Giorno liturgico</th><th>Vangelo</th><th>Categoria</th></tr>'+r.righe.map(x=>
+      `<tr class="${!x.data?'n':x.festivo?'f':''}"><td>${x.data||'DA ASSEGNARE'}</td><td>${esc(x.persona)}</td><td>${esc(x.ecc)}</td><td>${esc(x.giorno)}</td><td>${esc(x.rif)}</td><td>${x.macro}</td></tr>`).join('');
     $('bGen').disabled=!($('fInd').files[0]&&$('fTra').files[0]);
     if($('bGen').disabled)m.textContent+='\nPer generare servono anche le Indicazioni e la Traccia: caricale e rifai l’anteprima.';
   }catch(e){m.textContent='Errore: '+e.message;m.className='msg warn'}
 };
 
-function compilaTraccia(zipTpl,docXml,nome,giorno,rif,testo){
-  const dom=new DOMParser().parseFromString(docXml,'application/xml');
-  const ps=[...dom.getElementsByTagNameNS(W,'p')];
-  const txt=p=>[...p.getElementsByTagNameNS(W,'t')].map(t=>t.textContent).join('').trim();
-  const set=(p,s)=>{const rs=[...p.getElementsByTagNameNS(W,'r')];const t=rs[0].getElementsByTagNameNS(W,'t')[0];
-    t.textContent=s;t.setAttribute('xml:space','preserve');rs.slice(1).forEach(r=>r.parentNode.removeChild(r))};
-  let pt=null;
-  for(const p of ps){const t=txt(p);
-    if(t=='[Nome + Cognome]')set(p,nome);else if(t=='[GIORNO]')set(p,giorno);
-    else if(t=='[RIF VANGELO]')set(p,rif);else if(t=='[TESTO VANGELO]')pt=p}
-  if(!pt)throw new Error('Segnaposto [TESTO VANGELO] non trovato nella traccia.');
-  const model=pt.cloneNode(true);set(pt,testo[0]);let prev=pt;
-  for(const s of testo.slice(1)){const n=model.cloneNode(true);set(n,s);prev.parentNode.insertBefore(n,prev.nextSibling);prev=n}
-  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'+new XMLSerializer().serializeToString(dom);
-}
-
-async function xlsxRiepilogo(righe){
-  const wb=new ExcelJS.Workbook(),ws=wb.addWorksheet('Riepilogo');
-  ws.columns=[['Nome',16],['Cognome',20],['Regione',24],['Regione ecclesiastica',22],['Telefono',18],['Data',12],['Giorno liturgico',44],['Vangelo (riferimento)',34],['Macro categoria',18],['Cartella',44],['Testo del Vangelo',80]].map(([header,width])=>({header,width}));
-  const h=ws.getRow(1);h.font={bold:true,color:{argb:'FFFFFFFF'}};h.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF305496'}};
-  righe.forEach(r=>{
-    const row=ws.addRow([r.p.nome,r.p.cognome,r.p.regione,r.p.ecc,r.p.telefono,r.v?r.v.data:'DA ASSEGNARE',r.v?r.v.giorno:'',r.v?r.v.rif:'',r.v?r.v.macro:'',r.cart||'',r.v?r.v.testo.join('\n'):'']);
-    row.getCell(5).numFmt='@';if(r.v)row.getCell(6).numFmt='DD/MM/YYYY';
-    const col=!r.v?'FFFCE4D6':r.v.festivo?'FF'+VERDE.toUpperCase():null;
-    if(col)row.eachCell({includeEmpty:true},c=>c.fill={type:'pattern',pattern:'solid',fgColor:{argb:col}});
-  });
-  ws.views=[{state:'frozen',ySplit:1}];ws.autoFilter={from:'A1',to:'K1'};
-  return wb.xlsx.writeBuffer();
-}
-function scarica(blob,nome){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=nome;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),20000)}
-async function scriviDir(root,path,data){const parts=path.split('/');let d=root;for(const p of parts.slice(0,-1))d=await d.getDirectoryHandle(p,{create:true});
-  const f=await d.getFileHandle(parts.at(-1),{create:true}),w=await f.createWritable();await w.write(data);await w.close()}
-
 $('bGen').onclick=async()=>{
   const m=$('msgG');m.className='msg';$('bGen').disabled=true;
   try{
-    const ind=await rd($('fInd').files[0]),tra=await rd($('fTra').files[0]);
-    const indNome=$('fInd').files[0].name;
-    const zt=await JSZip.loadAsync(tra),docXml=await zt.file('word/document.xml').async('string');
-    const righe=state.righe.filter(r=>r.v),zip=new JSZip();
-    for(const [i,r] of righe.entries()){
-      m.textContent=`Creo le cartelle… ${i+1} di ${righe.length}`;
-      const z=await JSZip.loadAsync(tra);
-      z.file('word/document.xml',compilaTraccia(z,docXml,`${r.p.nome} ${r.p.cognome}`,r.v.giorno,r.v.rif,r.v.testo));
-      const bytes=await z.generateAsync({type:'uint8array',compression:'DEFLATE',compressionOptions:{level:1}});
-      const fn=`Traccia_contributo_${safe(r.p.cognome)}_${safe(r.p.nome)}.docx`;
-      zip.file(`${r.cart}/${indNome}`,ind);zip.file(`${r.cart}/${fn}`,bytes);
-    }
-    const xl=await xlsxRiepilogo(state.righe);
-    zip.file('riepilogo.xlsx',xl);
-    const blob=await zip.generateAsync({type:'blob',compression:'STORE'},meta=>{m.textContent='Compongo lo ZIP… '+Math.round(meta.percent)+'%'});
-    scarica(blob,'vangeli_cartelle.zip');
-    m.textContent=`Fatto: ${righe.length} cartelle e riepilogo.xlsx in un unico ZIP.`;m.className='msg ok';
+    const md=await avvia(m);
+    m.textContent='Genero cartelle e ZIP… la pagina può sembrare ferma per qualche decina di secondi.';await pausa();
+    const [csv,van]=await argv();
+    const res=md.genera_zip(csv,van,await u8($('fInd').files[0]),await u8($('fTra').files[0]),...opz());
+    const buf=res.getBuffer();scarica(new Blob([buf.data]),'vangeli_cartelle.zip');buf.release();res.destroy();
+    m.textContent='Fatto: ZIP scaricato (cartelle e riepilogo.xlsx).';m.className='msg ok';
   }catch(e){m.textContent='Errore: '+e.message;m.className='msg warn'}
   $('bGen').disabled=false;
 };
@@ -283,15 +175,10 @@ $('bTel').onclick=async()=>{
   const m=$('msgT');m.className='msg';
   try{
     if(!$('fRie').files[0]||!$('fTel').files[0])throw new Error('Carica il riepilogo e il CSV dei telefoni.');
-    const tel=new Map(parseCSV(await $('fTel').files[0].text()).filter(r=>r.telefono).map(r=>[norm(r.nome||'')+'|'+norm(r.cognome||''),r.telefono]));
-    const wb=new ExcelJS.Workbook();await wb.xlsx.load(await rd($('fRie').files[0]));const ws=wb.worksheets[0];
-    const col={};ws.getRow(1).eachCell((c,i)=>col[norm(String(c.value||''))]=i);
-    if(!col.nome||!col.cognome||!col.telefono)throw new Error('Nel riepilogo servono le colonne Nome, Cognome e Telefono.');
-    let n=0;ws.eachRow((row,i)=>{if(i==1)return;
-      const k=norm(String(row.getCell(col.nome).value||'').trim())+'|'+norm(String(row.getCell(col.cognome).value||'').trim());
-      if(tel.has(k)){const c=row.getCell(col.telefono);c.value=tel.get(k);c.numFmt='@';n++}});
-    scarica(new Blob([await wb.xlsx.writeBuffer()]),'riepilogo_con_telefoni.xlsx');
-    m.textContent=`Telefoni associati a ${n} persone su ${ws.rowCount-1}. File scaricato.`;m.className='msg '+(n?'ok':'warn');
+    const md=await avvia(m);
+    const res=md.aggiorna_telefoni(await u8($('fRie').files[0]),await $('fTel').files[0].text());
+    const buf=res.getBuffer();scarica(new Blob([buf.data]),'riepilogo_con_telefoni.xlsx');buf.release();res.destroy();
+    m.textContent=`Telefoni associati a ${md.ULTIMO_N} persone. File scaricato.`;m.className='msg '+(md.ULTIMO_N?'ok':'warn');
   }catch(e){m.textContent='Errore: '+e.message;m.className='msg warn'}
 };
 document.querySelectorAll('.i').forEach(b=>b.onclick=()=>{const p=$(b.dataset.t);p.hidden=!p.hidden;b.setAttribute('aria-expanded',String(!p.hidden))});
@@ -303,8 +190,13 @@ async function scaricaDocx(nome,par){
   z.file('word/document.xml',X+`<w:document xmlns:w="${W}"><w:body>`+par.map(p=>`<w:p><w:pPr><w:spacing w:after="200"/></w:pPr><w:r><w:rPr>${p.b?'<w:b/>':''}</w:rPr><w:t xml:space="preserve">${esc(p.t)}</w:t></w:r></w:p>`).join('')+'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1417" w:right="1134" w:bottom="1134" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>');
   scarica(await z.generateAsync({type:'blob',compression:'DEFLATE'}),nome);
 }
-$('tInd').onclick=()=>scaricaDocx('Indicazioni_per_collaboratori_template.docx',[{t:'Indicazioni per i collaboratori',b:1},{t:'Sostituisci questo testo con le istruzioni da consegnare a ogni collaboratore. Il file viene copiato identico in ogni cartella, senza modifiche.'}]);
-$('tTra').onclick=()=>scaricaDocx('Traccia_contributo_template.docx',[{t:'[Nome + Cognome]',b:1},{t:'Ecco le indicazioni per il tuo commento: grazie ancora per questo servizio!'},{t:'[GIORNO]',b:1},{t:'[RIF VANGELO]',b:1},{t:'[TESTO VANGELO]'},{t:'Scrivi qui le istruzioni per il contributo (lunghezza, scadenza, modalità di invio).'}]);
+const TEMPLATE_DIR='docs/'; // cartella del repository con i template (percorso relativo alla pagina)
+async function scaricaTemplate(nome,par){
+  try{const r=await fetch(TEMPLATE_DIR+nome);if(!r.ok)throw new Error(r.status);scarica(await r.blob(),nome)}
+  catch(e){await scaricaDocx(nome,par)} // se il file non c’è, scarica un template generato al volo
+}
+$('tInd').onclick=()=>scaricaTemplate('Indicazioni_per_collaboratori_template.docx',[{t:'Indicazioni per i collaboratori',b:1},{t:'Sostituisci questo testo con le istruzioni da consegnare a ogni collaboratore. Il file viene copiato identico in ogni cartella, senza modifiche.'}]);
+$('tTra').onclick=()=>scaricaTemplate('Traccia_contributo_template.docx',[{t:'[Nome + Cognome]',b:1},{t:'Ecco le indicazioni per il tuo commento: grazie ancora per questo servizio!'},{t:'[GIORNO]',b:1},{t:'[RIF VANGELO]',b:1},{t:'[TESTO VANGELO]'},{t:'Scrivi qui le istruzioni per il contributo (lunghezza, scadenza, modalità di invio).'}]);
 </script>
 </body>
 </html>
